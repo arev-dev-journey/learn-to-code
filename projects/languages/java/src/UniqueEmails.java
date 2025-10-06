@@ -4,8 +4,6 @@
  * description: Given an array  of strings, emails, write a function
  * that returns the number of unique emails that will actually receive mail
  */
-package leetcode.google;
-
 import java.util.Set;
 import java.util.HashSet;
 
