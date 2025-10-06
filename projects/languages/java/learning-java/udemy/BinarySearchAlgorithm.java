@@ -1,5 +1,3 @@
-package leetcode.google;
-
 public class BinarySearchAlgorithm {
 
   public int binarySearch(int[] intArray, int target) {
