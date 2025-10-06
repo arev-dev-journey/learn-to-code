@@ -1,0 +1,9 @@
+Declaring Pointers
+Initializing pointer variable to 'point nowhere'
+
+variable_Type *pointer_name {nullptr};
+
+int *int_ptr;
+char* char_ptr;
+
+

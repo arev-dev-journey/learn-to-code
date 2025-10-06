@@ -1,0 +1,52 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors/IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.env.*
+
+# Node
+node_modules/
+
+# Java
+*.class
+*.jar
+*.war
+
+# C/C++
+*.o
+*.out
+*.exe
+*.a
+*.so
+*.dSYM/
+
+# Build/Artifacts
+build/
+dist/
+.target/
+coverage/
+.cache/
+
+# Notebooks
+*.ipynb_checkpoints
+
+# Secrets
+archive/secrets/
+*.pem
+*.key
+*.crt
+
+# OS/Linux
+*~
