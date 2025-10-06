@@ -1,0 +1,13 @@
+- Amazon Q
+- $20 per user per month
+- Include in other AWS services, such as QuickSite. 
+  Understands natural language that you use to ask questions about your data
+
+- Amazon Q for EC2 
+- AWS Chatbot - a way to deploy an AWS Chatbot in a Slack or Microsoft Teams channel
+
+- Amazon Q for Glue (Extract Transform and Load)
+
+- PartyRock - a playground to create GenAI apps
+- 
+

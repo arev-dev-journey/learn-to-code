@@ -1,0 +1,5 @@
+.DS_Store
+.vscode/
+authentication.js
+*.pem
+account_notes.txt

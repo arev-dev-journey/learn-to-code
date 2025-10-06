@@ -1,0 +1,19 @@
+Introduction to GitHub Flow
+-cloning, pulling, branching, pushing
+- fork repo 
+- origin 
+- upstream
+github.com/new
+create new repo called software-project
+Internal is specific to organization
+Open code button
+Owner/Repo
+Clone the url
+vscode on exam
+git checkout -b new-branch
+git add .
+git status 
+git commit -m "Initial commit"
+git log
+git push -u origin main 
+git push --set-upstream origin new-branch
