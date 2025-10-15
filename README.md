@@ -10,6 +10,8 @@ This repository tracks my progress across languages (Python, Java, C++) and plat
 
 See `docs/ROADMAP.md` for detailed milestones.
 
+For a portfolio-focused strategy that separates experimental work from polished client-facing projects, review `docs/PORTFOLIO_PLAN.md`.
+
 ## Directory Layout
 ```
 .
