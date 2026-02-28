@@ -1,80 +1,198 @@
-# Partner Inventory Sync Backend (AWS-ready)
+# Partner Inventory Sync System
 
-A production-style backend example that:
+Production-style backend starter for partner inventory ingestion and synchronization, inspired by ticket marketplace integrations.
 
-- ingests partner inventory snapshots
-- processes operational events
-- synchronizes canonical inventory state
-- exposes HTTP APIs
-- uses AI tooling for low-stock recommendations (Bedrock when configured)
-- deploys on AWS ECS Fargate via CloudFormation
+## 1) High-level architecture overview
 
-## Architecture
+```
+Partner System
+   |
+   | REST (API key)
+   v
++------------------------+         +--------------------+
+| FastAPI API Service    |         |  Prometheus scrape |
+| - validation/normalize |----->   |  /metrics          |
+| - writes partner state |         +--------------------+
+| - emits domain events  |
++-----------+------------+
+            |
+            | queue publish (db queue locally, SQS in AWS)
+            v
++------------------------+
+| Queue Events           |
+| (Postgres table/SQS)   |
++-----------+------------+
+            |
+            v
++------------------------+       +------------------------------+
+| Worker Service         |-----> | Canonical Inventory Material |
+| - polls queue          |       | View (aggregated by SKU)     |
+| - sync pipeline        |       +------------------------------+
+| - marks failures       |
++-----------+------------+
+            |
+            v
++------------------------+
+| AI Failure Summarizer  |
+| OpenAI-compatible API  |
+| + fallback rules       |
++------------------------+
+```
 
-1. **Ingestion API** (`POST /v1/partners/{partner_id}/inventory`) stores partner inventory.
-2. **Event API** (`POST /v1/events`) queues business events.
-3. **Sync API** (`POST /v1/sync/run`) processes pending events and materializes canonical inventory.
-4. **Read APIs** expose partner and canonical state.
-5. **AI API** (`GET /v1/ai/recommendations/low-stock`) summarizes low-stock actions using:
-   - Amazon Bedrock (`BEDROCK_MODEL_ID` configured), or
-   - deterministic fallback rules.
+## 2) Project folder structure
 
-## Local Run
+```
+partner-inventory-sync/
+├── app/
+│   ├── ai.py
+│   ├── config.py
+│   ├── db.py
+│   ├── logging_config.py
+│   ├── main.py
+│   ├── metrics.py
+│   ├── models.py
+│   ├── normalizer.py
+│   ├── queue.py
+│   ├── schemas.py
+│   ├── services.py
+│   └── worker.py
+├── infra/aws/ecs-fargate.yaml
+├── tests/test_api.py
+├── Dockerfile
+├── Dockerfile.worker
+├── docker-compose.yml
+├── requirements.txt
+└── requirements-dev.txt
+```
+
+## 3) Step-by-step implementation
+
+1. **Partner ingestion API**: `POST /v1/partners/{partner_id}/inventory` accepts upsert/delete actions.
+2. **Normalization/validation**: SKU normalization (`trim + uppercase`) and business validation (`delete => quantity=0`).
+3. **Eventing**: every ingest emits an `INVENTORY_CHANGED` event through pluggable queue backend.
+4. **Async processing**: worker claims pending events and materializes canonical inventory totals.
+5. **Read models**: partner-level and canonical SKU read endpoints.
+6. **Observability**: JSON structured logs + Prometheus metrics.
+7. **AI feature**: `/v1/ai/failures/summary` summarizes failed queue events using OpenAI-compatible API.
+
+## 4) Complete code for each component
+
+See source files directly:
+- API entrypoint and endpoints: `app/main.py`
+- Domain and orchestration logic: `app/services.py`
+- Queue adapters (DB + SQS): `app/queue.py`
+- Data models and persistence: `app/models.py`, `app/db.py`
+- AI summarizer abstraction: `app/ai.py`
+- Worker process: `app/worker.py`
+
+## 5) Data flow explanation
+
+1. Partner calls ingestion endpoint with API key.
+2. API normalizes payload and persists partner inventory rows.
+3. API writes queue event.
+4. Worker polls queue and recomputes canonical inventory view.
+5. Read APIs serve canonical/partner state.
+6. If processing fails, failures are visible and summarized by AI endpoint.
+
+## API surface
+
+- `GET /health`
+- `GET /metrics`
+- `POST /v1/partners/{partner_id}/inventory`
+- `POST /v1/events`
+- `POST /v1/sync/run` (manual trigger for demo/local)
+- `GET /v1/partners/{partner_id}/inventory`
+- `GET /v1/inventory/{sku}`
+- `GET /v1/ai/failures/summary`
+
+> All `/v1/*` APIs require `x-api-key`.
+
+## Local setup instructions
+
+### Option A: Docker Compose (recommended)
+
+```bash
+docker compose up --build
+```
+
+### Option B: Run API locally
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt
+export DATABASE_URL='postgresql+psycopg://postgres:postgres@localhost:5432/inventory'
+export PARTNER_API_KEY='dev-partner-key'
 uvicorn app.main:app --reload
 ```
 
-Test:
+Run worker:
+
+```bash
+python -m app.worker
+```
+
+Run tests:
 
 ```bash
 pytest
 ```
 
-## API quickstart
+## Example API usage
 
 ```bash
-curl -X POST http://localhost:8000/v1/partners/acme/inventory \
+curl -X POST 'http://localhost:8000/v1/partners/acme/inventory' \
+  -H 'x-api-key: dev-partner-key' \
   -H 'content-type: application/json' \
-  -d '{"items":[{"sku":"SKU-1","quantity":5},{"sku":"SKU-2","quantity":18}]}'
+  -d '{"items":[{"sku":" sku-1 ","quantity":5,"action":"upsert"}]}'
 
-curl -X POST http://localhost:8000/v1/sync/run
-
-curl http://localhost:8000/v1/inventory/SKU-1
-
-curl 'http://localhost:8000/v1/ai/recommendations/low-stock?threshold=10'
+curl -X POST 'http://localhost:8000/v1/sync/run' -H 'x-api-key: dev-partner-key'
+curl 'http://localhost:8000/v1/inventory/SKU-1' -H 'x-api-key: dev-partner-key'
+curl 'http://localhost:8000/v1/ai/failures/summary' -H 'x-api-key: dev-partner-key'
 ```
 
-## AWS deployment (ECS Fargate)
+## Cloud readiness (AWS ECS/EC2)
 
-Build and push container:
+- Dockerized API and worker images.
+- Environment-variable-driven config.
+- SQS adapter available via `QUEUE_BACKEND=sqs` + `SQS_QUEUE_URL`.
+- Existing `infra/aws/ecs-fargate.yaml` can be extended to include:
+  - RDS PostgreSQL
+  - SQS queue
+  - separate worker ECS service
 
-```bash
-docker build -t partner-inventory-sync .
-# tag and push to ECR ...
-```
+### Suggested production env vars
 
-Deploy stack:
+- `DATABASE_URL`
+- `PARTNER_API_KEY`
+- `QUEUE_BACKEND=db|sqs`
+- `SQS_QUEUE_URL`
+- `AWS_REGION`
+- `LLM_BASE_URL`
+- `LLM_API_KEY`
+- `LLM_MODEL`
 
-```bash
-aws cloudformation deploy \
-  --template-file infra/aws/ecs-fargate.yaml \
-  --stack-name partner-inventory-sync \
-  --capabilities CAPABILITY_IAM \
-  --parameter-overrides \
-      VpcId=vpc-xxxxxxxx \
-      PublicSubnets='subnet-aaa,subnet-bbb' \
-      ContainerImage=123456789012.dkr.ecr.us-east-1.amazonaws.com/partner-inventory-sync:latest
-```
+## Scaling considerations
 
-### Optional Bedrock setup
+- Scale API horizontally behind ALB; stateless design.
+- Scale workers independently by queue depth.
+- Use partitioning and indexes on `partner_inventory` and queue table.
+- For high throughput: switch from DB queue to SQS + idempotent event handlers.
+- Add dead-letter queue and retry backoff policy.
 
-Set environment variables on the ECS task definition:
+## Failure modes
 
-- `AWS_REGION=us-east-1`
-- `BEDROCK_MODEL_ID=amazon.titan-text-express-v1` (or another enabled model)
+- **Bad payloads**: rejected at validation layer with 400.
+- **Worker failures**: events marked `failed` with error message.
+- **Queue outage**: fall back to DB queue in local mode.
+- **LLM outage**: AI endpoint gracefully returns deterministic rules summary.
+- **DB outage**: API fails fast; health checks detect non-ready state.
 
-Also grant `bedrock:InvokeModel` permission to the task role.
+## Future improvements
+
+- Add Alembic migrations.
+- Add idempotency keys on ingest endpoint.
+- Add async SQS consumer with long polling and DLQ.
+- Add OpenTelemetry tracing.
+- Add authN/authZ beyond API key.
+- Introduce CDC/outbox pattern for strict delivery guarantees.

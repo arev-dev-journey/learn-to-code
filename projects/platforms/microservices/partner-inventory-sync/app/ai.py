@@ -1,42 +1,55 @@
 import json
-import os
+from collections.abc import Sequence
+
+import httpx
+
+from .config import get_settings
+from .models import QueueEvent
 
 
-def build_low_stock_recommendation(low_stock_items: list[dict]) -> tuple[str, str]:
-    if not low_stock_items:
-        return "No low-stock SKUs detected. Current inventory levels are healthy.", "rules"
+def summarize_failed_events(events: Sequence[QueueEvent]) -> tuple[str, str]:
+    if not events:
+        return 'No failed events in queue.', 'rules'
 
-    model_id = os.getenv("BEDROCK_MODEL_ID")
-    if model_id:
+    settings = get_settings()
+    excerpts = [
+        {
+            'id': event.id,
+            'event_type': event.event_type,
+            'error_message': event.error_message,
+            'attempt_count': event.attempt_count,
+        }
+        for event in events[:20]
+    ]
+
+    if settings.llm_base_url and settings.llm_api_key:
         try:
-            import boto3
-
-            client = boto3.client("bedrock-runtime", region_name=os.getenv("AWS_REGION", "us-east-1"))
-            prompt = (
-                "You are an inventory operations copilot. Given low-stock records, provide "
-                "three concise actions to reduce stockout risk.\n"
-                f"Low-stock records: {json.dumps(low_stock_items)}"
-            )
-            body = json.dumps(
-                {
-                    "inputText": prompt,
-                    "textGenerationConfig": {
-                        "maxTokenCount": 300,
-                        "temperature": 0.2,
+            payload = {
+                'model': settings.llm_model,
+                'messages': [
+                    {'role': 'system', 'content': 'You summarize backend queue failures for operators.'},
+                    {
+                        'role': 'user',
+                        'content': f'Summarize the likely root causes and mitigations: {json.dumps(excerpts)}',
                     },
-                }
-            )
-            response = client.invoke_model(modelId=model_id, body=body)
-            payload = json.loads(response["body"].read())
-            text = payload.get("results", [{}])[0].get("outputText", "")
-            if text:
-                return text.strip(), f"bedrock:{model_id}"
+                ],
+                'temperature': 0.2,
+            }
+            headers = {'Authorization': f'Bearer {settings.llm_api_key}'}
+            with httpx.Client(timeout=10.0) as client:
+                response = client.post(f'{settings.llm_base_url}/chat/completions', json=payload, headers=headers)
+                response.raise_for_status()
+                data = response.json()
+            content = data['choices'][0]['message']['content']
+            if content:
+                return content.strip(), f'openai-compatible:{settings.llm_model}'
         except Exception:
             pass
 
-    top = ", ".join(f"{item['sku']} ({item['total_quantity']})" for item in low_stock_items[:3])
-    summary = (
-        f"Prioritize replenishment for {top}. Set partner-level reorder alerts and increase sync cadence "
-        "to every 5 minutes for these SKUs until safety stock is restored."
-    )
-    return summary, "rules"
+    grouped = {}
+    for event in excerpts:
+        key = event['error_message'] or 'unknown error'
+        grouped[key] = grouped.get(key, 0) + 1
+
+    summary = '; '.join(f"{count}x {err}" for err, count in grouped.items())
+    return f'Fallback summary of failures: {summary}.', 'rules'
